@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>palmer-type — Zsigmondy-Palmer Dental Notation Renderer</title>
+  <meta name="description" content="Render Zsigmondy-Palmer dental notation symbols as publication-ready images. A desktop tool for dentists and dental educators.">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" href="favicon.png" type="image/png">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="container header-inner">
+      <span class="header-title">palmer-type</span>
+      <nav class="lang-toggle" aria-label="Language">
+        <button class="lang-btn lang-active" data-lang="en">EN</button>
+        <span class="lang-sep">|</span>
+        <button class="lang-btn" data-lang="ja">JA</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container">
+        <h1>palmer-type</h1>
+        <p class="tagline" data-i18n="hero.tagline">Render Zsigmondy-Palmer dental notation as images.</p>
+        <span class="version-badge" id="version-badge" style="display:none"></span>
+        <div class="hero-buttons">
+          <a href="#download" class="btn btn-primary" data-i18n="hero.download">Download</a>
+          <a href="https://github.com/yosukey/palmer-type" class="btn btn-outline" target="_blank" rel="noopener" data-i18n="hero.github">View on GitHub</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section class="section section-alt" id="about">
+      <div class="container">
+        <h2 data-i18n="about.title">About</h2>
+        <p data-i18n="about.text">palmer-type compiles Zsigmondy-Palmer dental notation into publication-ready PNG, JPEG, or PDF images. Enter tooth numbers, click Render, and copy or save the result. No TeX expertise required.</p>
+        <p data-i18n="about.text2">Built on <a href="https://github.com/yosukey/palmer-latex">palmer.sty</a>, a LaTeX package for Palmer notation, and bundled with Tectonic as its TeX engine — no TeX distribution needed.</p>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+      <div class="container">
+        <h2 data-i18n="features.title">Features</h2>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon">&#9638;</div>
+            <h3 data-i18n="features.gui.title">GUI Rendering</h3>
+            <p data-i18n="features.gui.desc">Enter notation in a visual cross layout and render crisp images in seconds.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#9654;</div>
+            <h3 data-i18n="features.cli.title">CLI &amp; Batch</h3>
+            <p data-i18n="features.cli.desc">Automate rendering from the command line with single or batch JSON input.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">&#9776;</div>
+            <h3 data-i18n="features.converter.title">Word Converter</h3>
+            <p data-i18n="features.converter.desc">Replace \Palmer commands in .docx files with rendered images automatically.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screenshot -->
+    <section class="section section-alt" id="screenshot">
+      <div class="container text-center">
+        <h2 data-i18n="screenshot.title">Screenshot</h2>
+        <div class="screenshot-wrapper">
+          <img src="images/screenshot.png" alt="palmer-type GUI window with rendered dental notation preview" data-i18n-alt="screenshot.alt" loading="lazy">
+        </div>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section class="section" id="download">
+      <div class="container">
+        <h2 data-i18n="download.title">Download</h2>
+        <p data-i18n="download.text">Several executables are available on the GitHub Releases page. The installer (palmer-type-&#8230;-win-x64-setup.exe) is recommended for most users.</p>
+        <div class="download-cta">
+          <a href="https://github.com/yosukey/palmer-type/releases/latest" class="btn btn-primary" target="_blank" rel="noopener" data-i18n="download.button">Download Latest Release</a>
+        </div>
+        <details class="note-details">
+          <summary data-i18n="download.note_summary">Note on first run</summary>
+          <p data-i18n="download.note_text">The initial launch requires an internet connection. Tectonic automatically downloads the TeX support files it needs (~100 MB) and caches them locally. Subsequent launches work offline.</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- Related Projects -->
+    <section class="section section-alt" id="related">
+      <div class="container">
+        <h2 data-i18n="related.title">Related Projects</h2>
+        <ul class="related-list">
+          <li>
+            <strong><a href="https://github.com/yosukey/palmer-latex" target="_blank" rel="noopener">palmer.sty</a></strong>
+            — <span data-i18n="related.sty_desc">The underlying LaTeX package for Zsigmondy-Palmer dental notation. Licensed under LPPL 1.3+.</span>
+          </li>
+          <li>
+            <strong><a href="https://github.com/yosukey/palmer-type" target="_blank" rel="noopener">palmer-type</a></strong>
+            — <span data-i18n="related.repo_desc">Source code and issue tracker for this tool.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Donate -->
+    <section class="section" id="donate">
+      <div class="container">
+        <h2 data-i18n="donate.title">Support This Project</h2>
+        <p data-i18n="donate.text">palmer-type is free and open-source. Donations help fund ongoing research and development of this tool and the underlying palmer.sty package. If you find this project useful in your research, clinical work, or publishing, your support is greatly appreciated.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 Yosuke Yamazaki, Dept. of Anatomy, Nihon University School of Dentistry</p>
+      <p class="footer-license">MIT License (tool) / LPPL 1.3+ (palmer.sty)</p>
+      <p class="footer-grant" data-i18n="footer.grant">Supported by JSPS KAKENHI Grant Number JP25K15395.</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
