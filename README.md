@@ -316,8 +316,13 @@ rmdir /s /q "%APPDATA%\palmer-type\logs"
 
 ## License
 
-- `palmer.sty`: LaTeX Project Public License 1.3+ (Yosuke Yamazaki)
-- This tool: MIT License
+This project is available under a dual-licensing model.
+
+- Open-source license: GNU Affero General Public License v3.0 (AGPLv3)
+- Alternative license: commercial/proprietary license
+
+You may use this project under AGPLv3 if you comply with its terms.
+If you require terms other than AGPLv3 — for example, if you wish to keep modifications or a combined work closed-source — please contact the copyright holder to discuss alternative licensing.
 
 ## Acknowledgement
 
