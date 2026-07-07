@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 import re
 import stat
@@ -36,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import pypdfium2 as pdfium
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ __all__ = [
     "tectonic_cache_exists",
     "delete_tectonic_cache",
     "pdf_to_cropped_png",
+    "reconstruct_alpha_on_white",
     "copy_image_to_clipboard_win32",
     "validate_raw_input",
     "MAX_FIELD_LEN",
@@ -60,6 +62,8 @@ __all__ = [
     "MIN_FONT_SIZE_PT",
     "MAX_FONT_SIZE_PT",
     "DEFAULT_FONT_SIZE_PT",
+    "MIN_GAP_RATIO",
+    "MAX_GAP_RATIO",
     "DEFAULT_MARGIN_PX",
     "DEFAULT_FONT_FAMILY",
     "clamp_dpi",
@@ -75,6 +79,11 @@ DEFAULT_DPI = 600
 MIN_FONT_SIZE_PT = 2.0
 MAX_FONT_SIZE_PT = 144.0
 DEFAULT_FONT_SIZE_PT = 10.0
+# gap-ratio: palmer.sty v2 shrinks the visible white space uniformly.
+# 1 = default (maximum gap), 0 = minimum gap. palmer.sty clamps out-of-range
+# values to this interval with a warning.
+MIN_GAP_RATIO = 0.0
+MAX_GAP_RATIO = 1.0
 DEFAULT_MARGIN_PX = 8
 DEFAULT_FONT_FAMILY = "Times New Roman"
 
@@ -90,7 +99,8 @@ def clamp_dpi(value: str | int | float, fallback: int = DEFAULT_DPI) -> int:
     """Clamp *value* to the valid DPI range, returning *fallback* on error."""
     try:
         v = int(float(value))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError covers non-finite values such as "inf"/"1e999".
         return fallback
     return max(MIN_DPI, min(MAX_DPI, v))
 
@@ -246,6 +256,59 @@ def _build_color_tex(text_color: str) -> tuple[str, str]:
     return preamble, color_cmd
 
 
+# --- \Palmer optional-argument (key=value) construction ---
+
+# Accepted alignment values for the \Palmer `align` key.
+_ALIGN_VALUES: frozenset[str] = frozenset({"base", "center", "bottom"})
+
+
+def _build_option_list(
+    option: str = "base",
+    *,
+    no_vert: bool = False,
+    no_reverse: bool = False,
+    gap_ratio: float | None = None,
+) -> str:
+    r"""Build the ``\Palmer`` optional-argument key=value list for palmer.sty v2.
+
+    Returns the comma-separated list that goes inside the brackets, e.g.
+    ``"align=center, no-vert"``.
+
+    Args:
+        option: Vertical alignment — ``base``, ``center``, or ``bottom``.
+        no_vert: Suppress the vertical midline bar(s).
+        no_reverse: Display the UL/LL quadrants in input order (skip the
+            automatic mesial-to-distal reversal).
+        gap_ratio: Spacing multiplier in ``[0, 1]``; ``None`` leaves the
+            package default (``1``).
+
+    Raises:
+        ValueError: If *option* is not a valid alignment or *gap_ratio* is
+            out of range / not finite.
+    """
+    if option not in _ALIGN_VALUES:
+        raise ValueError(
+            f"option must be one of 'base', 'center', 'bottom': {option!r}"
+        )
+    parts = [f"align={option}"]
+    if gap_ratio is not None:
+        if isinstance(gap_ratio, bool) or not isinstance(gap_ratio, (int, float)) \
+                or not math.isfinite(gap_ratio):
+            raise ValueError(f"gap_ratio must be a finite number: {gap_ratio!r}")
+        if not (MIN_GAP_RATIO <= gap_ratio <= MAX_GAP_RATIO):
+            raise ValueError(
+                f"gap_ratio must be between {MIN_GAP_RATIO} and "
+                f"{MAX_GAP_RATIO}: {gap_ratio}"
+            )
+        # `:g` keeps the value compact (0.5, 1, 0) without trailing zeros.
+        parts.append(f"gap-ratio={gap_ratio:g}")
+    if no_vert:
+        parts.append("no-vert")
+    if no_reverse:
+        parts.append("no-reverse")
+    return ", ".join(parts)
+
+
 def _check_brace_balance(value: str, field: str) -> None:
     """Verify that braces in value are balanced.
 
@@ -275,6 +338,27 @@ def _check_brace_balance(value: str, field: str) -> None:
             f"'{field}' contains unmatched opening braces "
             f"({depth} unclosed '{{' braces): {value!r}"
         )
+
+
+def _check_no_unescaped_percent(value: str, field: str) -> None:
+    r"""Reject an unescaped ``%`` (a TeX comment) in a dental-notation field.
+
+    An unescaped ``%`` comments out the rest of the generated TeX line —
+    including the closing brace of the ``\Palmer`` argument — which turns a
+    small typo into a confusing compilation failure.  A literal percent sign
+    must be written ``\%``, which is left untouched here.
+    """
+    i = 0
+    while i < len(value):
+        if value[i] == '\\':
+            i += 2  # skip the escaped character (e.g. \% or \{)
+            continue
+        if value[i] == '%':
+            raise ValueError(
+                f"'{field}' contains an unescaped '%' (TeX comment character).\n"
+                r"Use '\%' if you meant a literal percent sign."
+            )
+        i += 1
 
 
 _DANGEROUS_CMD_RE = re.compile(
@@ -326,6 +410,7 @@ def _validate_tex_field(value: str, field: str) -> None:
             f"'{field}' exceeds the maximum length of {MAX_FIELD_LEN} characters"
         )
     _check_brace_balance(value, field)
+    _check_no_unescaped_percent(value, field)
     _check_no_dangerous_cmds(value, field)
 
 
@@ -348,6 +433,35 @@ def _validate_midline_field(value: str, field: str) -> None:
 
 
 # --- TeX backend ---
+
+def _diagnose_tex_failure(diagnostic_text: str) -> list[str]:
+    """Return actionable hints for known TeX failures (empty list if none)."""
+    lower = (diagnostic_text or "").lower()
+    hints: list[str] = []
+
+    # Undefined control sequence inside palmer.sty (not palmer.tex) => the
+    # kernel lacks \DeclareKeys (LaTeX < 2022-06-01).
+    if "undefined control sequence" in lower and (
+        "palmer.sty" in lower
+        or "declarekeys" in lower
+        or "processkeyoptions" in lower
+    ):
+        hints.append(
+            "The TeX engine's LaTeX kernel predates 2022-06-01 and this copy "
+            "of palmer.sty requires it. Update palmer.sty to the latest "
+            "release, or use a TeX installation with LaTeX 2022-06-01+."
+        )
+
+    # Harmless fontconfig start-up warning on Linux/macOS, not the failure cause.
+    if "fontconfig error: cannot load default config file" in lower:
+        hints.append(
+            'The "Fontconfig error: Cannot load default config file" line is a '
+            "harmless start-up warning (fontconfig is not configured on this "
+            "host) and is not itself the cause of the failure."
+        )
+
+    return hints
+
 
 @dataclass
 class TeXBackend:
@@ -396,11 +510,16 @@ class TeXBackend:
                 with open(log_path, errors="replace") as _lf:
                     log_tail = "".join(deque(_lf, maxlen=20))
             stderr_text = (result.stderr or "").strip()
+            hints = _diagnose_tex_failure(f"{stderr_text}\n{log_tail}")
+            hint_block = (
+                "\nHint:\n" + "\n".join(f"  - {h}" for h in hints) if hints else ""
+            )
             raise RuntimeError(
                 f"TeX compilation failed ({self.name}):\n"
                 f"Exit code: {result.returncode}\n"
                 + (f"Stderr:\n{stderr_text}\n" if stderr_text else "")
                 + f"Log tail:\n{log_tail}"
+                + hint_block
             )
         return pdf_path
 
@@ -649,6 +768,42 @@ def pdf_to_cropped_png(
     return cropped  # type: ignore[no-any-return]
 
 
+def reconstruct_alpha_on_white(
+    img: Image.Image, text_rgb: tuple[int, int, int] = (0, 0, 0)
+) -> Image.Image:
+    """Recover a transparent RGBA image from a white-background render.
+
+    The engine renders text of a single colour (*text_rgb*) onto a white
+    canvas, so every pixel is a blend ``P = a*text_rgb + (1-a)*white``.  This
+    inverts that blend to recover the coverage ``a`` for each pixel and returns
+    an RGBA image whose colour is the *solid* text colour and whose alpha is the
+    recovered coverage.  Compositing the result onto any background reproduces
+    the original render on white and keeps the text fully saturated on other
+    backgrounds.
+
+    The coverage is read from the text colour's darkest channel (the one with
+    the most contrast against white).  For black text this reduces to the
+    luminance-inversion used historically; for light colours (e.g. yellow) it
+    avoids the wash-out that a luminance mask would cause.  Near-white text has
+    no usable contrast, so a plain luminance mask is used as a fallback.
+    """
+    rgb = img.convert("RGB")
+    r, g, b = text_rgb
+    denom = 255 - min(r, g, b)
+    if denom <= 0:
+        # White / near-white text: no channel has contrast against the white
+        # background, so fall back to a luminance-based coverage estimate.
+        alpha = ImageOps.invert(rgb.convert("L"))
+    else:
+        channel_index = (r, g, b).index(min(r, g, b))
+        inv = ImageOps.invert(rgb.getchannel(channel_index))  # 255 - P_channel
+        scale = 255.0 / denom
+        alpha = inv.point(lambda v, s=scale: min(255, int(round(v * s))))
+    solid = Image.new("RGBA", rgb.size, (r, g, b, 255))
+    solid.putalpha(alpha)
+    return solid
+
+
 # --- Palmer compiler ---
 
 class PalmerCompiler:
@@ -722,6 +877,9 @@ class PalmerCompiler:
         font_size_pt: float = 10.0,
         text_color: str = "",
         *,
+        no_vert: bool = False,
+        no_reverse: bool = False,
+        gap_ratio: float | None = None,
         dpi: int | None = None,
         margin_top: int | None = None,
         margin_bottom: int | None = None,
@@ -731,8 +889,18 @@ class PalmerCompiler:
     ) -> Image.Image:
         """Render a Palmer dental notation diagram and return a PIL Image.
 
-        Maps to the \\Palmer[option]{UL}{UR}{LR}{LL}{upper_mid}{lower_mid} command.
+        Maps to the palmer.sty v2 command
+        ``\\Palmer[align=<option>, ...]{UL}{UR}{LR}{LL}{upper_mid}{lower_mid}``.
 
+        option: vertical alignment of the cross — ``base``, ``center``, or
+            ``bottom`` (emitted as the ``align`` key).
+        no_vert: suppress the vertical midline bar(s) (the ``no-vert`` key).
+            When True the midline arguments are forced empty, so any
+            ``upper_mid``/``lower_mid`` values are ignored.
+        no_reverse: display the UL/LL quadrants in input order, skipping the
+            automatic mesial-to-distal reversal (the ``no-reverse`` key).
+        gap_ratio: spacing multiplier in ``[0, 1]`` (the ``gap-ratio`` key);
+            ``None`` (default) uses the package default of ``1``.
         font_family: key from FONT_PACKAGES, or any system font name accepted by fontspec.
         font_size_pt: point size; the cross line dimensions scale proportionally.
         text_color: optional color for the rendered text. Accepts a 6-digit hex
@@ -743,17 +911,21 @@ class PalmerCompiler:
         margin_top/bottom/left/right: Override instance margins for this call.
         alpha: When True, the returned image has a transparent background (RGBA).
         """
-        if option not in ("base", "center", "bottom"):
-            raise ValueError(
-                f"option must be one of 'base', 'center', 'bottom': {option!r}"
-            )
+        # Validates `option` and `gap_ratio`; raises ValueError on bad values.
+        option_list = _build_option_list(
+            option, no_vert=no_vert, no_reverse=no_reverse, gap_ratio=gap_ratio,
+        )
         if not (MIN_FONT_SIZE_PT <= font_size_pt <= MAX_FONT_SIZE_PT):
             raise ValueError(
                 f"font_size_pt must be in the range {MIN_FONT_SIZE_PT} to {MAX_FONT_SIZE_PT}: {font_size_pt}"
             )
         for _f, _v in [("UL", UL), ("UR", UR), ("LR", LR), ("LL", LL)]:
             _validate_tex_field(_v, _f)
-        for _f, _v in [("upper_mid", upper_mid), ("lower_mid", lower_mid)]:
+        # palmer.sty v2 forces the midlines empty when `no-vert` is set; mirror
+        # that here so callers cannot smuggle text into a suppressed midline.
+        eff_upper_mid = "" if no_vert else upper_mid
+        eff_lower_mid = "" if no_vert else lower_mid
+        for _f, _v in [("upper_mid", eff_upper_mid), ("lower_mid", eff_lower_mid)]:
             _validate_midline_field(_v, _f)
         _validate_color(text_color)
 
@@ -762,9 +934,9 @@ class PalmerCompiler:
         leading_pt = font_size_pt * _LINE_HEIGHT_RATIO
         size_cmd = rf"\fontsize{{{font_size_pt}pt}}{{{leading_pt:.2f}pt}}\selectfont "
         palmer_cmd = (
-            rf"\Palmer[{option}]"
+            rf"\Palmer[{option_list}]"
             + f"{{{UL}}}{{{UR}}}{{{LR}}}{{{LL}}}"
-            + f"{{{upper_mid}}}{{{lower_mid}}}"
+            + f"{{{eff_upper_mid}}}{{{eff_lower_mid}}}"
         )
         if color_cmd:
             tex_body = "{" + color_cmd + " " + size_cmd + palmer_cmd + "}"
@@ -813,6 +985,10 @@ class PalmerCompiler:
                 validate_raw_input(extra_preamble, "extra_preamble")
 
         eff_dpi = dpi if dpi is not None else self.dpi
+        # Validate the (possibly overridden) DPI here as well, so a bad per-call
+        # value is rejected instead of producing a degenerate or huge raster.
+        if not (MIN_DPI <= eff_dpi <= MAX_DPI):
+            raise ValueError(f"DPI must be between {MIN_DPI} and {MAX_DPI}, got {eff_dpi}")
         eff_margin_top = margin_top if margin_top is not None else self.margin_top
         eff_margin_bottom = margin_bottom if margin_bottom is not None else self.margin_bottom
         eff_margin_left = margin_left if margin_left is not None else self.margin_left
@@ -858,9 +1034,9 @@ class PalmerCompiler:
 
         Remaining keyword arguments are forwarded to :meth:`render`.
         Accepted keys: ``UL``, ``UR``, ``LR``, ``LL``, ``upper_mid``,
-        ``lower_mid``, ``option``, ``font_family``, ``font_size_pt``,
-        ``text_color``, ``dpi``, ``margin_top``, ``margin_bottom``,
-        ``margin_left``, ``margin_right``.
+        ``lower_mid``, ``option``, ``no_vert``, ``no_reverse``, ``gap_ratio``,
+        ``font_family``, ``font_size_pt``, ``text_color``, ``dpi``,
+        ``margin_top``, ``margin_bottom``, ``margin_left``, ``margin_right``.
 
         When *alpha* is not explicitly provided in *kwargs*, it defaults to
         ``True`` for PNG output and ``False`` for JPEG/PDF (which do not

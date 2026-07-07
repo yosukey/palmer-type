@@ -63,8 +63,10 @@ def _attach_console_win32() -> None:
             try:
                 conout2 = open("CONOUT$", "wb", buffering=0)
                 conin = open("CONIN$", "rb", buffering=0)
-                sys.stdout = io.TextIOWrapper(conout, encoding="utf-8")
-                sys.stderr = io.TextIOWrapper(conout2, encoding="utf-8")
+                # line_buffering flushes each newline so CLI output streams to
+                # the terminal as it is produced, rather than only at exit.
+                sys.stdout = io.TextIOWrapper(conout, encoding="utf-8", line_buffering=True)
+                sys.stderr = io.TextIOWrapper(conout2, encoding="utf-8", line_buffering=True)
                 sys.stdin  = io.TextIOWrapper(conin,  encoding="utf-8")
             except (AttributeError, OSError):
                 conout.close()

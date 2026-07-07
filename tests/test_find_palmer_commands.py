@@ -42,11 +42,41 @@ def test_single_command():
 
 
 def test_command_with_option():
+    """A bare (non key=value) optional argument is captured verbatim."""
     text = r"\Palmer[center]{A}{B}{C}{D}{}{}"
     cmds = find_palmer_commands(text)
     assert len(cmds) == 1
     assert cmds[0]["option"] == "center"
     assert cmds[0]["UL"] == "A"
+
+
+def test_command_with_v2_align_option():
+    """palmer.sty v2 key=value optional argument is captured verbatim."""
+    text = r"\Palmer[align=center]{A}{B}{C}{D}{}{}"
+    cmds = find_palmer_commands(text)
+    assert len(cmds) == 1
+    assert cmds[0]["option"] == "align=center"
+    assert cmds[0]["UL"] == "A"
+
+
+def test_command_with_v2_no_vert_option():
+    """The v2 no-vert key sits in the optional argument, not the midlines."""
+    text = r"\Palmer[no-vert]{1}{}{}{4}{}{}"
+    cmds = find_palmer_commands(text)
+    assert len(cmds) == 1
+    assert cmds[0]["option"] == "no-vert"
+    assert cmds[0]["UL"] == "1"
+    assert cmds[0]["LL"] == "4"
+    assert cmds[0]["upper_mid"] == ""
+    assert cmds[0]["lower_mid"] == ""
+
+
+def test_command_with_v2_multi_key_option():
+    """A comma-separated v2 key list is captured whole (including the comma)."""
+    text = r"\Palmer[align=bottom, no-vert]{1}{}{}{}{}{}"
+    cmds = find_palmer_commands(text)
+    assert len(cmds) == 1
+    assert cmds[0]["option"] == "align=bottom, no-vert"
 
 
 def test_multiple_commands():

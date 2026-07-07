@@ -33,6 +33,7 @@ from palmer_engine import (
     MAX_FIELD_LEN, MAX_RAW_LEN,
     MIN_DPI, MAX_DPI, DEFAULT_DPI,
     MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT, DEFAULT_FONT_SIZE_PT,
+    MIN_GAP_RATIO, MAX_GAP_RATIO,
     DEFAULT_MARGIN_PX,
     tectonic_cache_exists,
 )
@@ -54,7 +55,7 @@ Examples:
   %(prog)s --UL 12345678 --UR 12345678 --LR 12345678 --LL 12345678 -o full.png
   %(prog)s --UL 321 --UR 123 -o upper_ant.png
   %(prog)s --batch snippets.json --outdir images/
-  %(prog)s --raw "\\Palmer[center]{1}{}{}{}{}{}" -o custom.png
+  %(prog)s --raw "\\Palmer[align=center]{1}{}{}{}{}{}" -o custom.png
 
 Exit codes:
   0  Success
@@ -76,7 +77,14 @@ Exit codes:
     parser.add_argument("--lower-mid", default="", help="lower midline symbol")
     parser.add_argument("--option", default="base",
                         choices=["base", "center", "bottom"],
-                        help="vertical alignment of the cross (default: base)")
+                        help="vertical alignment of the cross (align key; default: base)")
+    parser.add_argument("--no-vert", action="store_true",
+                        help="suppress the vertical midline bar(s)")
+    parser.add_argument("--no-reverse", action="store_true",
+                        help="display UL/LL quadrants in input order (skip auto-reversal)")
+    parser.add_argument("--gap-ratio", type=float, default=None, metavar="RATIO",
+                        help=f"gap spacing multiplier, {MIN_GAP_RATIO}-{MAX_GAP_RATIO} "
+                             f"(default: package default of 1)")
 
     # Font
     parser.add_argument("--font", default="Times New Roman",
@@ -142,6 +150,10 @@ Exit codes:
     if not (MIN_FONT_SIZE_PT <= args.font_size <= MAX_FONT_SIZE_PT):
         parser.error(f"--font-size must be between {MIN_FONT_SIZE_PT} and {MAX_FONT_SIZE_PT}.")
 
+    # Validate gap-ratio range.
+    if args.gap_ratio is not None and not (MIN_GAP_RATIO <= args.gap_ratio <= MAX_GAP_RATIO):
+        parser.error(f"--gap-ratio must be between {MIN_GAP_RATIO} and {MAX_GAP_RATIO}.")
+
     # Validate incompatible option combinations.
     if args.batch and args.raw:
         parser.error("--batch and --raw cannot be used together.")
@@ -184,57 +196,67 @@ Exit codes:
         return
 
     # --- Single render ---
-    if args.raw:
-        validate_raw_input(args.raw, "--raw")
-        img = compiler.render_raw(args.raw, alpha=args.transparent)
-    else:
-        if not any((args.UL, args.UR, args.LR, args.LL)):
-            parser.error("Specify at least one quadrant (--UL, --UR, --LR, --LL).")
-        img = compiler.render(
-            UL=args.UL, UR=args.UR, LR=args.LR, LL=args.LL,
-            upper_mid=args.upper_mid, lower_mid=args.lower_mid,
-            option=args.option,
-            font_family=args.font,
-            font_size_pt=args.font_size,
-            text_color=args.color,
-            alpha=args.transparent,
-        )
-
-    print(f"Rendered: {img.width}×{img.height}px", file=sys.stderr)
-
-    if args.output:
-        suffix = args.output.suffix.lower()
-        if args.transparent and suffix in (".jpg", ".jpeg", ".pdf"):
-            print(
-                f"Warning: --transparent is ignored for {suffix} output "
-                f"(only PNG supports transparency).",
-                file=sys.stderr,
+    # Input, compilation, and output errors are reported as a concise message
+    # instead of a raw traceback, matching the batch path's error handling.
+    # SystemExit raised by parser.error()/sys.exit() passes through untouched.
+    try:
+        if args.raw:
+            validate_raw_input(args.raw, "--raw")
+            img = compiler.render_raw(args.raw, alpha=args.transparent)
+        else:
+            if not any((args.UL, args.UR, args.LR, args.LL)):
+                parser.error("Specify at least one quadrant (--UL, --UR, --LR, --LL).")
+            img = compiler.render(
+                UL=args.UL, UR=args.UR, LR=args.LR, LL=args.LL,
+                upper_mid=args.upper_mid, lower_mid=args.lower_mid,
+                option=args.option,
+                no_vert=args.no_vert,
+                no_reverse=args.no_reverse,
+                gap_ratio=args.gap_ratio,
+                font_family=args.font,
+                font_size_pt=args.font_size,
+                text_color=args.color,
+                alpha=args.transparent,
             )
-            img = img.convert("RGB")
-        img.save(str(args.output), dpi=(args.dpi, args.dpi))
-        print(f"Saved: {args.output}", file=sys.stderr)
 
-    if args.clipboard:
-        if sys.platform != "win32":
-            print("Error: --clipboard is only supported on Windows.", file=sys.stderr)
-            sys.exit(1)
-        from palmer_engine import copy_image_to_clipboard_win32
-        copy_image_to_clipboard_win32(img, dpi=args.dpi)
-        print("Copied to clipboard.", file=sys.stderr)
+        print(f"Rendered: {img.width}×{img.height}px", file=sys.stderr)
 
-    if not args.output and not args.clipboard:
-        # Write PNG to stdout when no output destination is specified.
-        if sys.stdout.isatty():
-            print(
-                "Error: No output destination specified.\n"
-                "Use -o FILE to save, --clipboard to copy, or pipe to another command.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        import io
-        buf = io.BytesIO()
-        img.save(buf, format="PNG", dpi=(args.dpi, args.dpi))
-        sys.stdout.buffer.write(buf.getvalue())
+        if args.output:
+            suffix = args.output.suffix.lower()
+            if args.transparent and suffix in (".jpg", ".jpeg", ".pdf"):
+                print(
+                    f"Warning: --transparent is ignored for {suffix} output "
+                    f"(only PNG supports transparency).",
+                    file=sys.stderr,
+                )
+                img = img.convert("RGB")
+            img.save(str(args.output), dpi=(args.dpi, args.dpi))
+            print(f"Saved: {args.output}", file=sys.stderr)
+
+        if args.clipboard:
+            if sys.platform != "win32":
+                print("Error: --clipboard is only supported on Windows.", file=sys.stderr)
+                sys.exit(1)
+            from palmer_engine import copy_image_to_clipboard_win32
+            copy_image_to_clipboard_win32(img, dpi=args.dpi)
+            print("Copied to clipboard.", file=sys.stderr)
+
+        if not args.output and not args.clipboard:
+            # Write PNG to stdout when no output destination is specified.
+            if sys.stdout.isatty():
+                print(
+                    "Error: No output destination specified.\n"
+                    "Use -o FILE to save, --clipboard to copy, or pipe to another command.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            import io
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", dpi=(args.dpi, args.dpi))
+            sys.stdout.buffer.write(buf.getvalue())
+    except (ValueError, RuntimeError, OSError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _batch_process(compiler: PalmerCompiler, json_path: Path, outdir: Path, dpi: int) -> int:
@@ -325,6 +347,29 @@ def _batch_process(compiler: PalmerCompiler, json_path: Path, outdir: Path, dpi:
                 validate_raw_input(item["raw"], f"batch[{i}].raw")
                 img = compiler.render_raw(item["raw"], alpha=item_alpha)
             else:
+                for _bkey in ("no_vert", "no_reverse"):
+                    if _bkey in item and not isinstance(item[_bkey], bool):
+                        raise ValueError(
+                            f"Field '{_bkey}' must be a boolean, "
+                            f"got {type(item[_bkey]).__name__}: {item[_bkey]!r}"
+                        )
+                gap_ratio = item.get("gap_ratio")
+                if gap_ratio is not None:
+                    if isinstance(gap_ratio, bool) or not isinstance(gap_ratio, (int, float)):
+                        raise ValueError(
+                            f"Field 'gap_ratio' must be a number, "
+                            f"got {type(gap_ratio).__name__}: {gap_ratio!r}"
+                        )
+                    if not math.isfinite(gap_ratio):
+                        raise ValueError(
+                            f"Field 'gap_ratio' must be a finite number, "
+                            f"got {gap_ratio!r}"
+                        )
+                    if not (MIN_GAP_RATIO <= gap_ratio <= MAX_GAP_RATIO):
+                        raise ValueError(
+                            f"Field 'gap_ratio' must be between "
+                            f"{MIN_GAP_RATIO} and {MAX_GAP_RATIO}, got {gap_ratio}"
+                        )
                 font_size = item.get("font_size", DEFAULT_FONT_SIZE_PT)
                 if not isinstance(font_size, (int, float)):
                     raise ValueError(
@@ -352,6 +397,9 @@ def _batch_process(compiler: PalmerCompiler, json_path: Path, outdir: Path, dpi:
                     upper_mid=item.get("upper_mid", ""),
                     lower_mid=item.get("lower_mid", ""),
                     option=item.get("option", "base"),
+                    no_vert=bool(item.get("no_vert", False)),
+                    no_reverse=bool(item.get("no_reverse", False)),
+                    gap_ratio=gap_ratio,
                     font_family=item.get("font", "Times New Roman"),
                     font_size_pt=float(font_size),
                     text_color=item.get("color", ""),

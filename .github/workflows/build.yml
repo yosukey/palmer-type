@@ -7,7 +7,7 @@ on:
   workflow_dispatch:  # Manual trigger is also available
 
 env:
-  TECTONIC_VERSION: "0.15.0"
+  TECTONIC_VERSION: "0.16.9"
 
 jobs:
   build:
@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: 'pip'
@@ -29,7 +29,7 @@ jobs:
 
       - name: Cache tectonic binary
         id: cache-tectonic
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: src/bin/tectonic.exe
           key: tectonic-${{ env.TECTONIC_VERSION }}-x86_64-pc-windows-msvc
@@ -105,7 +105,7 @@ jobs:
         shell: pwsh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PalmerType
           path: dist/palmer-type-*.exe
@@ -113,7 +113,7 @@ jobs:
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/palmer-type-*.exe

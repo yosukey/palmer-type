@@ -38,6 +38,8 @@ palmer-tool-dev/
 │   ├── script.js             # Language switching logic (i18n, localStorage)
 │   └── images/
 │       └── screenshot.png    # GUI screenshot embedded in the landing page
+├── LICENSE                   # GNU AGPLv3 — palmer-type's own license
+├── THIRD-PARTY-NOTICES.txt   # bundled third-party license texts
 ├── mypy.ini                  # mypy configuration
 ├── README.md
 └── INTERNALS.md
@@ -85,7 +87,7 @@ python src/build_exe.py --all         # All three variants
 
 ### Portable exe (--onefile)
 
-PyInstaller bundles `palmer.sty` and `tectonic.exe` into the executable. At runtime they are extracted to `%TEMP%\onefile_XXXXX\` (`sys._MEIPASS`). `palmer_engine.py` looks for them there via `find_bundled_tectonic()` and `_find_sty()`.
+PyInstaller bundles `palmer.sty`, `tectonic.exe`, `LICENSE`, and `THIRD-PARTY-NOTICES.txt` into the executable. At runtime they are extracted to `%TEMP%\onefile_XXXXX\` (`sys._MEIPASS`). The installer variant additionally places `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt` at the install root for discoverability. `palmer_engine.py` looks for them there via `find_bundled_tectonic()` and `_find_sty()`.
 
 The exe is built with `--noconsole` to suppress the console window in GUI mode. In CLI mode, `palmer_main.py` calls `AttachConsole(-1)` (Win32) to reconnect stdout/stderr to the parent terminal.
 
