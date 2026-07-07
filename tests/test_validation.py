@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from palmer_engine import (
     _check_brace_balance,
     _check_no_dangerous_cmds,
+    _check_no_unescaped_percent,
+    _validate_tex_field,
     _validate_color,
     _get_font_preamble,
     validate_raw_input,
@@ -99,6 +101,39 @@ class TestDangerousCmds:
     def test_word_boundary(self):
         """\\typewriter should NOT match \\write (word boundary aware)."""
         _check_no_dangerous_cmds(r"\typewriter", "test")
+
+
+# ---------------------------------------------------------------------------
+# _check_no_unescaped_percent
+# ---------------------------------------------------------------------------
+
+class TestUnescapedPercent:
+
+    def test_plain_ok(self):
+        _check_no_unescaped_percent("12345", "UL")
+
+    def test_escaped_percent_ok(self):
+        """A literal percent written \\% must be accepted."""
+        _check_no_unescaped_percent(r"5\%", "UL")
+
+    def test_unescaped_percent_rejected(self):
+        with pytest.raises(ValueError, match="unescaped '%'"):
+            _check_no_unescaped_percent("1%2", "UL")
+
+    def test_trailing_percent_rejected(self):
+        with pytest.raises(ValueError, match="unescaped '%'"):
+            _check_no_unescaped_percent("ab%", "UL")
+
+    def test_validate_tex_field_rejects_unescaped_percent(self):
+        with pytest.raises(ValueError, match="unescaped '%'"):
+            _validate_tex_field("1%", "UL")
+
+    def test_validate_tex_field_allows_escaped_percent(self):
+        _validate_tex_field(r"\textbf{5\%}", "UL")
+
+    def test_raw_input_allows_percent(self):
+        """Raw TeX is a power-user path; '%' comments stay permitted there."""
+        validate_raw_input(r"\Palmer{1}{}{}{}{}{} % note", "test")
 
 
 # ---------------------------------------------------------------------------

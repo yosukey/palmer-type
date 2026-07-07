@@ -11,6 +11,8 @@ from __future__ import annotations
 import functools
 import itertools
 import logging
+import math
+import os
 import re
 import subprocess
 import tempfile
@@ -27,7 +29,13 @@ from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph
 from PIL import Image
 
-from palmer_engine import PalmerCompiler, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE_PT
+from palmer_engine import (
+    PalmerCompiler,
+    DEFAULT_FONT_FAMILY,
+    DEFAULT_FONT_SIZE_PT,
+    MIN_GAP_RATIO,
+    MAX_GAP_RATIO,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +281,83 @@ def find_palmer_commands(text: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Optional-argument parsing
+# ---------------------------------------------------------------------------
+
+# Alignment values accepted for the \Palmer `align` key.  `centre` is the
+# British spelling that palmer.sty v2 also accepts.
+_ALIGN_KEYWORDS: frozenset[str] = frozenset({"base", "center", "centre", "bottom"})
+
+
+def _parse_optbool(value: str | None) -> bool:
+    """Interpret a pgfkeys-style boolean value (``true`` / ``false`` / omitted).
+
+    A bare key (``value is None``) means ``true`` — matching palmer.sty's
+    ``no-vert/.default = true``.  Only an explicit ``false`` turns it off; any
+    other value is treated as ``true`` (the key being present signals intent).
+    """
+    if value is None:
+        return True
+    return value.strip().lower() != "false"
+
+
+def parse_palmer_options(option: str | None) -> dict:
+    r"""Parse the optional argument of a ``\Palmer`` command into settings.
+
+    Parses the palmer.sty v2 key=value syntax
+    (``align=center, no-vert, no-reverse, gap-ratio=0.5``).
+
+    Returns a dict with keys:
+
+    * ``align``      -- ``"base"`` | ``"center"`` | ``"bottom"``
+    * ``no_vert``    -- ``bool``
+    * ``no_reverse`` -- ``bool``
+    * ``gap_ratio``  -- ``float`` clamped to ``[0, 1]``, or ``None`` (package
+      default)
+
+    Unknown keys are ignored: palmer.sty itself is the authority on validity;
+    the converter only needs enough to render and describe the command.  An
+    out-of-range ``gap-ratio`` is clamped (as palmer.sty does) rather than
+    rejected, so a stray value never fails an otherwise valid command.
+    """
+    result: dict = {
+        "align": "base",
+        "no_vert": False,
+        "no_reverse": False,
+        "gap_ratio": None,
+    }
+    if not option:
+        return result
+    for raw_token in option.split(","):
+        token = raw_token.strip()
+        if not token:
+            continue
+        if "=" in token:
+            key, _, val = token.partition("=")
+            key = key.strip().lower()
+            val = val.strip()
+        else:
+            key, val = token.lower(), None
+
+        if key == "align":
+            v = (val or "").lower()
+            if v in _ALIGN_KEYWORDS:
+                result["align"] = "center" if v == "centre" else v
+        elif key == "no-vert":
+            result["no_vert"] = _parse_optbool(val)
+        elif key == "no-reverse":
+            result["no_reverse"] = _parse_optbool(val)
+        elif key == "gap-ratio" and val:
+            try:
+                g = float(val)
+            except ValueError:
+                continue
+            if math.isfinite(g):
+                result["gap_ratio"] = max(MIN_GAP_RATIO, min(MAX_GAP_RATIO, g))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Alt-text generation for accessibility
 # ---------------------------------------------------------------------------
 
@@ -480,9 +565,10 @@ def _build_alt_text(cmd: dict, mode: str) -> str:
         raise ValueError(f"Unknown alt-text mode: {mode!r}")
 
     # --- Midline analysis ------------------------------------------------
+    opts = parse_palmer_options(cmd.get("option"))
     upper_mid = _strip_tex_commands(cmd.get("upper_mid", ""))
     lower_mid = _strip_tex_commands(cmd.get("lower_mid", ""))
-    is_novert = upper_mid == "novert" or lower_mid == "novert"
+    is_novert = opts["no_vert"]
     upper_is_dash = upper_mid in _MIDLINE_DASHES
     lower_is_dash = lower_mid in _MIDLINE_DASHES
 
@@ -657,10 +743,11 @@ def _extract_font(run, on_debug: Callable[[str], None] | None = None) -> tuple[s
     None).  *text_color* is a ``#RRGGBB`` hex string, or ``""`` when the run
     uses the default (black) colour.
 
-    Both ``w:rFonts/@w:ascii`` and ``w:rFonts/@w:eastAsia`` are read.  When
-    the ASCII font is a generic Word default (e.g. Times New Roman, Century)
-    **and** the eastAsia font is installed on the system, the eastAsia font is
-    preferred — this matches the behaviour users see in Japanese Word documents.
+    Both ``w:rFonts/@w:ascii`` and ``w:rFonts/@w:eastAsia`` are read.  When the
+    ASCII font is absent or an *inherited* generic Word default (e.g. Times New
+    Roman, Century), the eastAsia font is preferred — this matches the
+    behaviour users see in Japanese Word documents.  An ASCII font set
+    explicitly on the run is always honoured, even if it is a generic name.
     """
     font_name = DEFAULT_FONT_FAMILY
     font_size_pt = DEFAULT_FONT_SIZE_PT
@@ -967,21 +1054,36 @@ def _process_paragraph(
         src_run = _run_at_offset(para.runs, cmd["start"])
         font_name, font_size_pt, text_color = _extract_font(src_run, on_debug=on_debug)
 
+        # Alt-text is a best-effort accessibility annotation; a failure to
+        # build it (e.g. non-standard tooth characters) must not prevent the
+        # image from being rendered and inserted.  Generate it in its own try
+        # so only the annotation is dropped, not the whole command.
+        cmd_alt_text = ""
         try:
-            cmd_alt_text = ""
             if alt_text_mode == "Palmer command":
                 cmd_alt_text = full[cmd["start"] : cmd["end"]]
             elif alt_text_mode is not None:
                 cmd_alt_text = _build_alt_text(cmd, alt_text_mode)
+        except ValueError as alt_exc:
+            logger.warning("Alt-text skipped (image still inserted): %s", alt_exc)
+            if on_debug:
+                on_debug(f"Alt-text skipped (image still inserted): {alt_exc}")
+
+        try:
+            opts = parse_palmer_options(cmd.get("option"))
+            no_vert = opts["no_vert"]
 
             img = compiler.render(
                 UL=cmd.get("UL", ""),
                 UR=cmd.get("UR", ""),
                 LR=cmd.get("LR", ""),
                 LL=cmd.get("LL", ""),
-                upper_mid=cmd.get("upper_mid", ""),
-                lower_mid=cmd.get("lower_mid", ""),
-                option=cmd.get("option") or "base",
+                upper_mid="" if no_vert else cmd.get("upper_mid", ""),
+                lower_mid="" if no_vert else cmd.get("lower_mid", ""),
+                option=opts["align"],
+                no_vert=no_vert,
+                no_reverse=opts["no_reverse"],
+                gap_ratio=opts["gap_ratio"],
                 font_family=font_name,
                 font_size_pt=font_size_pt,
                 text_color=text_color,
@@ -998,8 +1100,7 @@ def _process_paragraph(
             if valign_mode == "Force center":
                 valign = "center"
             else:  # "Follow command option"
-                opt = (cmd.get("option") or "base").lower()
-                valign = "center" if opt == "center" else "base"
+                valign = "center" if opts["align"] == "center" else "base"
             rendered.append((cmd, out, cmd_alt_text, valign, font_size_pt))
             replaced += 1
             if on_command:
@@ -1233,8 +1334,9 @@ def convert_docx(
                      ``None`` (default) skips alt-text.
         valign_mode: ``"Force center"`` (default) centres every inline
                      image on the text line.  ``"Follow command option"``
-                     reads each command's ``[base|center|bottom]`` option
-                     and applies centre or baseline alignment accordingly.
+                     reads each command's ``align`` option
+                     (``align=base|center|bottom``) and applies centre or
+                     baseline alignment accordingly.
         stop_event:  Optional :class:`threading.Event`.  When set, the
                      conversion loop checks it before each paragraph and
                      raises :exc:`ConversionCancelled` if it is set.
@@ -1329,6 +1431,20 @@ def convert_docx(
             replaced += n
 
         _log(f"Saving {output_path.name} ...")
-        doc.save(str(output_path))
+        # Write to a temporary file in the destination directory, then replace
+        # the target atomically.  In overwrite mode this guarantees the
+        # original document is never left half-written if saving fails.
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{output_path.stem}_", suffix=".docx.tmp",
+            dir=str(output_path.parent),
+        )
+        os.close(tmp_fd)
+        tmp_path = Path(tmp_name)
+        try:
+            doc.save(str(tmp_path))
+            os.replace(tmp_path, output_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     return replaced, errors

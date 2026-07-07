@@ -65,6 +65,9 @@ if __version__ == "dev":
 
 _tectonic_exe = BASE_DIR / "bin" / "tectonic.exe"
 _app_icon = BASE_DIR / "assets" / "palmer-type.ico"
+_repo_root = BASE_DIR.parent
+_license_file = _repo_root / "LICENSE"
+_notices_file = _repo_root / "THIRD-PARTY-NOTICES.txt"
 
 
 def _require_tectonic() -> None:
@@ -84,6 +87,8 @@ def _require_tectonic() -> None:
 DATA_FILES_COMMON: list[str] = [
     f"--add-data={BASE_DIR / 'palmer.sty'}:.",                              # → _MEIPASS/palmer.sty
     f"--add-data={BASE_DIR / 'assets' / 'palmer-type.ico'}:assets",        # → _MEIPASS/assets/palmer-type.ico
+    f"--add-data={_license_file}:.",                                       # → _MEIPASS/LICENSE (AGPLv3)
+    f"--add-data={_notices_file}:.",                                       # → _MEIPASS/THIRD-PARTY-NOTICES.txt
 ]
 DATA_FILES_TECTONIC: list[str] = [
     f"--add-data={_tectonic_exe}:bin",           # → _MEIPASS/bin/tectonic.exe

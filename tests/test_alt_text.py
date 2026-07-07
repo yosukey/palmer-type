@@ -56,13 +56,6 @@ class TestFDI:
         assert "11" in result
         assert "12" in result
 
-    def test_novert_returns_empty(self):
-        """FDI numbers encode the quadrant; novert makes side unknown → empty."""
-        result = _build_alt_text(
-            _cmd(UL="1", upper_mid="novert"), "FDI",
-        )
-        assert result == ""
-
 
 # ---------------------------------------------------------------------------
 # Universal mode
@@ -73,13 +66,6 @@ class TestUniversal:
     def test_single_tooth(self):
         result = _build_alt_text(_cmd(UL="1"), "Universal")
         assert "8" in result  # UL tooth 1 → Universal #8
-
-    def test_novert_returns_empty(self):
-        """Universal numbers are side-specific; novert → empty."""
-        result = _build_alt_text(
-            _cmd(UL="1", LL="3", upper_mid="novert"), "Universal",
-        )
-        assert result == ""
 
     def test_deciduous(self):
         result = _build_alt_text(_cmd(UL="A"), "Universal")
@@ -102,17 +88,6 @@ class TestAnatomical:
         assert "Third molar" in result
         assert "Left Mandibular" in result
 
-    def test_novert_removes_right_left(self):
-        """novert: use 'Maxillary'/'Mandibular' without Right/Left."""
-        result = _build_alt_text(
-            _cmd(UL="1", LL="8", upper_mid="novert", lower_mid="novert"),
-            "Anatomical",
-        )
-        assert "Maxillary Central incisor" in result
-        assert "Mandibular Third molar" in result
-        assert "Right" not in result
-        assert "Left" not in result
-
 
 # ---------------------------------------------------------------------------
 # Alphanumeric mode
@@ -131,29 +106,28 @@ class TestAlphanumeric:
         assert "UL1" in result
         assert "UL2" in result
 
-    def test_novert_upper(self):
-        """novert: UL field → 'U' prefix (no left/right distinction)."""
-        result = _build_alt_text(
-            _cmd(UL="1", upper_mid="novert", lower_mid="novert"),
-            "Alphanumeric",
-        )
-        assert "U1" in result
-        assert "UL1" not in result
 
-    def test_novert_lower(self):
-        """novert: LL field → 'L' prefix (no left/right distinction)."""
-        result = _build_alt_text(
-            _cmd(LL="3", upper_mid="novert", lower_mid="novert"),
-            "Alphanumeric",
-        )
-        assert "L3" in result
-        assert "LL3" not in result
+# ---------------------------------------------------------------------------
+# no-vert via the palmer.sty v2 option key
+# ---------------------------------------------------------------------------
 
-    def test_novert_upper_and_lower(self):
-        """novert: both upper and lower produce U/L prefixes."""
+class TestNoVertOption:
+    """palmer.sty v2 signals no-vert through the `no-vert` option key; alt-text
+    reacts to it (the side becomes unknown for FDI/Universal, U/L prefixes for
+    Alphanumeric, and no Right/Left for Anatomical)."""
+
+    def test_fdi_returns_empty(self):
+        # FDI numbers encode the side; no-vert makes the side unknown → empty.
+        result = _build_alt_text(_cmd(UL="1", option="no-vert"), "FDI")
+        assert result == ""
+
+    def test_universal_returns_empty(self):
+        result = _build_alt_text(_cmd(UL="1", LL="3", option="no-vert"), "Universal")
+        assert result == ""
+
+    def test_alphanumeric_uses_u_l_prefix(self):
         result = _build_alt_text(
-            _cmd(UL="12", LL="45", upper_mid="novert", lower_mid="novert"),
-            "Alphanumeric",
+            _cmd(UL="12", LL="45", option="no-vert"), "Alphanumeric",
         )
         assert "U1" in result
         assert "U2" in result
@@ -162,33 +136,14 @@ class TestAlphanumeric:
         assert "UL" not in result
         assert "LL" not in result
 
-    def test_novert_no_midline_suffix(self):
-        """novert: 'novert' should not appear in the midline suffix."""
+    def test_anatomical_drops_right_left(self):
         result = _build_alt_text(
-            _cmd(UL="1", upper_mid="novert", lower_mid="novert"),
-            "Alphanumeric",
+            _cmd(UL="1", LL="8", option="align=base, no-vert"), "Anatomical",
         )
-        assert "novert" not in result
-
-    def test_novert_upper_mid_only(self):
-        """novert in upper_mid only still activates novert mode."""
-        result = _build_alt_text(
-            _cmd(UL="1", upper_mid="novert"),
-            "Alphanumeric",
-        )
-        assert "U1" in result
-        assert "UL1" not in result
-        assert "novert" not in result
-
-    def test_novert_lower_mid_only(self):
-        """novert in lower_mid only still activates novert mode."""
-        result = _build_alt_text(
-            _cmd(LL="2", lower_mid="novert"),
-            "Alphanumeric",
-        )
-        assert "L2" in result
-        assert "LL2" not in result
-        assert "novert" not in result
+        assert "Maxillary Central incisor" in result
+        assert "Mandibular Third molar" in result
+        assert "Right" not in result
+        assert "Left" not in result
 
 
 # ---------------------------------------------------------------------------

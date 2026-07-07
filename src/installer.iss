@@ -36,6 +36,9 @@ WizardStyle=modern
 
 [Files]
 Source: "..\dist\palmer-type\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+; License and third-party notices, placed at the install root for discoverability.
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\palmer-type"; Filename: "{app}\palmer-type.exe"

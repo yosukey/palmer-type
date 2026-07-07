@@ -129,7 +129,7 @@ The **Converter** tab lets you open a `.docx` file that contains `\Palmer` comma
    | Mode | Description |
    |---|---|
    | Force center | Always center every image vertically on the text baseline (default) |
-   | Follow command option | By default the bottom edge of each image aligns with the bottom of the line. `\Palmer[center]{…}` changes this to vertical center alignment. |
+   | Follow command option | By default the bottom edge of each image aligns with the bottom of the line. `\Palmer[align=center]{…}` changes this to vertical center alignment. |
 
 3. Click **Convert**.
 4. Choose a save mode:
@@ -139,12 +139,22 @@ The **Converter** tab lets you open a `.docx` file that contains `\Palmer` comma
 
 #### Writing `\Palmer` commands in Word
 
-Type the commands directly in your Word document using the same syntax as `palmer.sty`:
+Type the commands directly in your Word document using the same syntax as `palmer.sty` (v2):
 
 ```
 \Palmer{UL}{UR}{LR}{LL}{upper_mid}{lower_mid}
-\Palmer[option]{UL}{UR}{LR}{LL}{upper_mid}{lower_mid}
+\Palmer[align=center]{UL}{UR}{LR}{LL}{upper_mid}{lower_mid}
+\Palmer[no-vert]{UL}{UR}{LR}{LL}{}{}
 ```
+
+The optional argument uses palmer.sty v2 key=value options:
+
+| Key | Meaning |
+|---|---|
+| `align=base\|center\|bottom` | Vertical alignment of the cross (default: `base`) |
+| `no-vert` | Suppress the vertical midline bar(s) |
+| `no-reverse` | Keep the UL/LL quadrants in input order (skip auto-reversal) |
+| `gap-ratio=<0–1>` | Uniformly shrink the visible spacing (default: `1`) |
 
 Examples:
 
@@ -152,7 +162,8 @@ Examples:
 |---|---|
 | `\Palmer{1}{}{}{}{}{}` | Upper-left quadrant, tooth 1 |
 | `\Palmer{12345678}{12345678}{12345678}{12345678}{}{}` | Full dentition |
-| `\Palmer[center]{123}{123}{}{}{}{}` | Upper anterior region (vertically centered) |
+| `\Palmer[align=center]{123}{123}{}{}{}{}` | Upper anterior region (vertically centered) |
+| `\Palmer[no-vert]{12345678}{}{}{12345678}{}{}` | One arch, no left/right midline |
 
 #### Font and size detection
 
@@ -215,6 +226,10 @@ If neither `-o` nor `--clipboard` is given, the PNG is written to stdout (useful
 | `--LR` | TEXT | Lower-right quadrant of the cross (patient's **left** lower jaw) |
 | `--upper-mid` | TEXT | Upper midline symbol |
 | `--lower-mid` | TEXT | Lower midline symbol |
+| `--option` | base\|center\|bottom | Vertical alignment of the cross (default: `base`) |
+| `--no-vert` | — | Suppress the vertical midline bar(s) |
+| `--no-reverse` | — | Display UL/LL quadrants in input order (skip auto-reversal) |
+| `--gap-ratio` | FLOAT | Gap spacing multiplier, 0.0–1.0 (default: package default of 1) |
 | `-o`, `--output` | PATH | Output file path (PNG / JPEG / PDF) |
 | `--clipboard` | — | Copy rendered image to clipboard (Windows) |
 | `--batch` | PATH | JSON file for batch processing |
@@ -243,6 +258,10 @@ Pass a JSON array to `--batch`. Each object may contain:
 | `label` | No | Human-readable label (logged to stderr) |
 | `UL`, `UR`, `LL`, `LR` | — | Quadrant inputs — same spatial convention as the CLI flags above |
 | `upper_mid`, `lower_mid` | — | Midline symbols |
+| `option` | — | Vertical alignment: `base`, `center`, or `bottom` (default: `base`) |
+| `no_vert` | — | `true` to suppress the vertical midline bar(s) |
+| `no_reverse` | — | `true` to display UL/LL quadrants in input order |
+| `gap_ratio` | — | Gap spacing multiplier, 0.0–1.0 |
 | `color` | — | Text color — same format as `--color` above |
 | `transparent` | — | `true` for transparent background (PNG and clipboard) |
 | `font` | — | Font family name (default: `Times New Roman`) |
@@ -323,6 +342,33 @@ This project is available under a dual-licensing model.
 
 You may use this project under AGPLv3 if you comply with its terms.
 If you require terms other than AGPLv3 — for example, if you wish to keep modifications or a combined work closed-source — please contact the copyright holder to discuss alternative licensing.
+
+## Third-party software
+
+`palmer-type.exe` bundles third-party components, each under its own license.
+The complete license texts are provided in
+[`THIRD-PARTY-NOTICES.txt`](THIRD-PARTY-NOTICES.txt) (also installed alongside
+the program). The linked components are under permissive licenses compatible
+with the AGPLv3; Tectonic and `palmer.sty` are separate aggregated works that
+keep their own licenses (see the note below the table).
+
+| Component | License | Relationship |
+|---|---|---|
+| CPython | PSF-2.0 | linked (interpreter) |
+| Tcl/Tk (tkinter) | TCL (BSD-style) | linked |
+| Pillow (+ zlib, libjpeg-turbo, libpng, libtiff, FreeType, LittleCMS2, OpenJPEG, libwebp, HarfBuzz, Brotli, xz) | HPND / MIT-CMU (deps: permissive) | linked |
+| pypdfium2 + PDFium (+ abseil, ICU, FreeType, …) | Apache-2.0 / BSD-3-Clause | linked |
+| python-docx | MIT | linked |
+| lxml (+ libxml2, libxslt) | BSD-3-Clause (deps: MIT) | linked |
+| typing-extensions | PSF-2.0 | linked |
+| PyInstaller (bootloader) | GPL-2.0-or-later WITH Bootloader-Exception | build / bootloader |
+| Tectonic | MIT | aggregated (separate TeX engine) |
+| palmer.sty | LPPL-1.3c | aggregated (TeX input) |
+
+Tectonic and `palmer.sty` are invoked/read as a separate program and input
+data (mere aggregation), so they retain their own licenses. The TeXLive support
+files that Tectonic downloads on first run are fetched by the user's own
+Tectonic and are **not** redistributed by palmer-type.
 
 ## Acknowledgement
 

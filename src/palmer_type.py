@@ -19,6 +19,7 @@ import datetime
 import functools
 import json
 import logging
+import math
 import os
 import platform
 import re
@@ -29,6 +30,7 @@ import threading
 import tkinter as tk
 import webbrowser
 import tkinter.font as tkfont
+from collections import deque
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 from tkinter import ttk, filedialog, messagebox, colorchooser
@@ -38,12 +40,14 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-from PIL import Image, ImageTk, ImageOps
+from PIL import Image, ImageTk
 
 from palmer_engine import (
     PalmerCompiler, FONT_PACKAGES, tectonic_cache_exists, delete_tectonic_cache, clamp_dpi,
+    reconstruct_alpha_on_white,
     MIN_DPI, MAX_DPI,
     MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT, DEFAULT_FONT_SIZE_PT,
+    MIN_GAP_RATIO, MAX_GAP_RATIO,
     DEFAULT_MARGIN_PX,
     MM_PER_INCH,
 )
@@ -678,6 +682,10 @@ class PalmerTypeApp:
         self.root.title(f"palmer-type  v{__version__}")
         self.root.geometry("700x680")
         self.root.minsize(_MIN_WINDOW_SIZE, _MIN_WINDOW_SIZE)
+        # Route the window-manager close button (the [X]) through _on_exit so
+        # the in-progress-render prompt runs and the debug log file is closed
+        # cleanly, exactly as with File -> Exit.
+        self.root.protocol("WM_DELETE_WINDOW", self._on_exit)
         self._set_window_icon()
 
         self.compiler: PalmerCompiler | None = None
@@ -698,8 +706,10 @@ class PalmerTypeApp:
         self.config = AppConfig()
 
         # Buffer startup debug messages so they can be replayed in the debug
-        # log widget when the user enables debug mode later.
-        self._startup_log: list[str] = []
+        # log widget when the user enables debug mode later.  Bounded so the
+        # handler (which stays attached for the whole session) cannot grow
+        # without limit; the persistent log file keeps the full history.
+        self._startup_log: deque[str] = deque(maxlen=2000)
         self._startup_log_handler = _StartupLogHandler(self)
         logging.getLogger().addHandler(self._startup_log_handler)
         logging.getLogger().setLevel(logging.DEBUG)
@@ -1533,6 +1543,30 @@ class PalmerTypeApp:
         self.dpi_spin.bind("<KeyRelease>", self._on_advanced_change)
         ttk.Label(dpi_frame, text="dpi").grid(row=0, column=2, sticky="w", padx=(3, 0))
 
+        # ---- Notation Spacing ----
+        spacing_frame = ttk.LabelFrame(parent, text="Notation Spacing", padding=10)
+        spacing_frame.pack(fill="x", padx=10, pady=(5, 5))
+
+        ttk.Label(spacing_frame, text="Gap ratio:").grid(
+            row=0, column=0, sticky="e", padx=(0, 5), pady=4)
+        self.gap_ratio_spin = ttk.Spinbox(
+            spacing_frame, from_=MIN_GAP_RATIO, to=MAX_GAP_RATIO, increment=0.05,
+            width=6, format="%.2f", command=self._on_advanced_change,
+        )
+        self.gap_ratio_spin.set(f"{MAX_GAP_RATIO:.2f}")  # default 1.00 = maximum gap
+        self.gap_ratio_spin.grid(row=0, column=1, sticky="w", pady=4)
+        self.gap_ratio_spin.bind("<KeyRelease>", self._on_advanced_change)
+        ttk.Label(
+            spacing_frame,
+            text=(
+                "Uniformly shrinks the visible spacing between elements. "
+                "0 = minimum, 1 = maximum spacing (default)."
+            ),
+            foreground="#555555",
+            wraplength=420,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
         # ---- Image Margins ----
         margin_frame = ttk.LabelFrame(parent, text="Image Margins", padding=10)
         margin_frame.pack(fill="x", padx=10, pady=(5, 5))
@@ -1640,13 +1674,27 @@ class PalmerTypeApp:
         """Read the DPI spinbox value, falling back to 600 on invalid input."""
         return clamp_dpi(self.dpi_spin.get())
 
+    def _get_gap_ratio(self) -> float:
+        """Read the gap-ratio spinbox, clamping to [MIN_GAP_RATIO, MAX_GAP_RATIO].
+
+        Falls back to MAX_GAP_RATIO (the package default of 1) on empty or
+        invalid input.
+        """
+        try:
+            v = float(self.gap_ratio_spin.get())
+        except (ValueError, OverflowError):
+            return MAX_GAP_RATIO
+        if not math.isfinite(v):
+            return MAX_GAP_RATIO
+        return max(MIN_GAP_RATIO, min(MAX_GAP_RATIO, v))
+
     def _update_mm_labels(self):
         """Recalculate and refresh the mm equivalent labels for all margin spinboxes."""
         dpi = self._get_dpi()
         for key, spin in self.margin_spins.items():
             try:
                 px = max(0, int(float(spin.get())))
-            except ValueError:
+            except (ValueError, OverflowError):
                 px = 8
             mm = px * MM_PER_INCH / dpi
             self.margin_mm_vars[key].set(f"\u2248 {mm:.2f} mm")
@@ -1657,7 +1705,7 @@ class PalmerTypeApp:
         for key, spin in self.margin_spins.items():
             try:
                 result[key] = max(0, int(float(spin.get())))
-            except ValueError:
+            except (ValueError, OverflowError):
                 result[key] = 8
         return result
 
@@ -1736,10 +1784,22 @@ class PalmerTypeApp:
             "SOFTWARE."
         )
 
-        _APP_MIT = (
-            "MIT License\n\n"
-            "Copyright (c) 2026 Yosuke Yamazaki\n\n"
-            + _MIT_BODY
+        _APP_LICENSE = (
+            "palmer-type\n"
+            "Copyright (C) 2026 Yosuke Yamazaki\n\n"
+            "This program is free software: you can redistribute it and/or modify\n"
+            "it under the terms of the GNU Affero General Public License as published\n"
+            "by the Free Software Foundation, either version 3 of the License, or\n"
+            "(at your option) any later version.\n\n"
+            "This program is distributed in the hope that it will be useful, but\n"
+            "WITHOUT ANY WARRANTY; without even the implied warranty of\n"
+            "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero\n"
+            "General Public License for more details.\n\n"
+            "You should have received a copy of the GNU Affero General Public License\n"
+            "along with this program. If not, see <https://www.gnu.org/licenses/>.\n"
+            "The full license text is also provided in the accompanying LICENSE file.\n\n"
+            "Alternatively, this software is available under a separate commercial\n"
+            "license. Contact the copyright holder for terms other than the AGPLv3."
         )
 
         _TECTONIC_MIT = (
@@ -1754,7 +1814,7 @@ class PalmerTypeApp:
             st.configure(state="disabled")
 
         _ins("h2",   "This Software License\n")
-        _ins("body", _APP_MIT + "\n")
+        _ins("body", _APP_LICENSE + "\n")
         _ins("h2",   "\nAcknowledgments \u2014 Tectonic\n")
         _ins("body", "This application bundles the Tectonic TeX engine.\n")
         _ins("url",  "https://tectonic-typesetting.github.io/\n\n")
@@ -1911,6 +1971,17 @@ class PalmerTypeApp:
         r, g, b = self.custom_font_color
         return f"#{r:02x}{g:02x}{b:02x}"
 
+    def _text_color_rgb(self) -> tuple[int, int, int]:
+        """Return the current font color as an RGB tuple (black when default).
+
+        Used to recover a correct transparency mask from the white-background
+        render; ``current_image`` is always re-rendered on any color change
+        (via ``_mark_dirty``), so this stays in sync with the displayed image.
+        """
+        if self.font_color_mode_var.get() == "black":
+            return (0, 0, 0)
+        return self.custom_font_color
+
     def _bg_rgb(self) -> tuple[int, int, int] | None:
         """Return the current background as an RGB tuple, or None for transparent."""
         mode = self.bg_mode_var.get()
@@ -1939,11 +2010,11 @@ class PalmerTypeApp:
             # Already white — no compositing needed.
             return img.convert("RGB")
 
-        # Build an alpha mask: white → transparent, dark → opaque.
-        # ImageOps.invert on a grayscale image maps 255→0 and 0→255.
-        mask = ImageOps.invert(img.convert("L"))
-        rgba = img.convert("RGBA")
-        rgba.putalpha(mask)
+        # Recover coverage alpha from the white-background render using the
+        # known text colour.  A plain luminance mask would fade light font
+        # colours (e.g. yellow) almost to nothing on transparent / coloured
+        # backgrounds; keying off the text colour keeps them saturated.
+        rgba = reconstruct_alpha_on_white(img, self._text_color_rgb())
 
         if bg is None:
             # Transparent PNG requested.
@@ -1953,7 +2024,7 @@ class PalmerTypeApp:
             else:
                 return rgba
 
-        result = Image.new("RGBA", img.size, bg + (255,))
+        result = Image.new("RGBA", rgba.size, bg + (255,))
         result.paste(rgba, mask=rgba.split()[3])
         return result.convert("RGB")
 
@@ -1965,7 +2036,8 @@ class PalmerTypeApp:
         When novert is enabled the right column (GUI labels UL/LL, engine keys
         UR/LR) and both mid entries are cleared and locked; the left column
         (GUI labels UR/LR, engine keys UL/LL) remains editable.
-        'novert' is then passed as both upper_mid and lower_mid to the engine.
+        The engine receives the palmer.sty v2 ``no-vert`` option key with empty
+        midline arguments.
         """
         _novert_entries = [
             self.entries["UR"],
@@ -1993,24 +2065,27 @@ class PalmerTypeApp:
             font_size_pt = float(self.size_spin.get())
         except ValueError:
             font_size_pt = DEFAULT_FONT_SIZE_PT
-        upper_mid = "novert" if self.novert_var.get() else self.upper_mid_entry.get().strip()
-        lower_mid = "novert" if self.novert_var.get() else self.lower_mid_entry.get().strip()
+        # In no-vert mode the midline entries are cleared and locked, so they
+        # read as empty; the engine receives the palmer.sty v2 `no-vert` key.
         return {
             "UL": self.entries["UL"].get().strip(),
             "UR": self.entries["UR"].get().strip(),
             "LL": self.entries["LL"].get().strip(),
             "LR": self.entries["LR"].get().strip(),
-            "upper_mid": upper_mid,
-            "lower_mid": lower_mid,
+            "upper_mid": self.upper_mid_entry.get().strip(),
+            "lower_mid": self.lower_mid_entry.get().strip(),
+            "no_vert": self.novert_var.get(),
             "font_family": self.font_var.get(),
             "font_size_pt": font_size_pt,
             "text_color": self._get_text_color(),
+            "gap_ratio": self._get_gap_ratio(),
         }
 
     def _update_tex_display(self, params: dict):
         """Show the generated TeX command in the read-only entry."""
+        opt = "[no-vert]" if params.get("no_vert") else ""
         tex = (
-            f"\\Palmer"
+            f"\\Palmer{opt}"
             f"{{{params['UL']}}}{{{params['UR']}}}"
             f"{{{params['LR']}}}{{{params['LL']}}}"
             f"{{{params['upper_mid']}}}{{{params['lower_mid']}}}"
@@ -2084,13 +2159,15 @@ class PalmerTypeApp:
                 f"Params: UL={params['UL']!r}  UR={params['UR']!r}  "
                 f"LL={params['LL']!r}  LR={params['LR']!r}")
             self._debug_log_append(
-                f"Mid: upper={params['upper_mid']!r}  lower={params['lower_mid']!r}")
+                f"Mid: upper={params['upper_mid']!r}  lower={params['lower_mid']!r}"
+                f"  no_vert={params['no_vert']}")
             self._debug_log_append(
                 f"Font: {params['font_family']} {params['font_size_pt']}pt  "
                 f"color={params['text_color']}")
             self._debug_log_append(
                 f"DPI: {dpi}  Margins: T={margins['top']} B={margins['bottom']} "
                 f"L={margins['left']} R={margins['right']}")
+            self._debug_log_append(f"Gap ratio: {params['gap_ratio']:g}")
             self._debug_log_append(
                 f"CJK fallback font (log widgets): {_detect_cjk_fallback_font()}")
         else:
